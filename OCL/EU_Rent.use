@@ -1,0 +1,542 @@
+﻿model Eu_Rent
+
+-- classes
+enum Poziom_Paliwa { pusty, pelny, _7_8, _3_4, _5_8, _1_2, _3_8, _1_4, _1_8 }
+enum Status { otwarty, opozniony, zalegly, zwrocony }
+enum Status_Wynajmu_Z_Wyprzedzeniem { zarezerwowany, przypisany }
+
+-- data reprezentowana jako offset od 2000 roku
+class Date
+attributes
+  date: Integer
+operations
+  Today(): Integer = 2000 + 18*365 + 56
+  IsToday(): Boolean = self.date = Today()
+  HowFarFromToday(): Integer = (date - Today()).abs()
+  HowFarFromDate(d: Date): Integer = (date - d.date).abs()
+  DateIsAfter(d: Date): Boolean = self.date > d.date
+  DateIsInPast(): Boolean = self.date < Today()
+  DateIsInFuture(): Boolean = self.date > Today()
+end
+
+class DateTime < Date
+attributes
+  time: Integer		-- liczony w minutach jako offset of północy
+
+operations
+  Now(): Integer = 6*60 + 24
+  IsNow(): Boolean = IsToday() and self.time = Now()
+  
+  -- odstep czasu w minutach
+  HowFarFromNow(): Integer = if Now() >= time then Now() - time else 24*60 - time + Now() endif
+  DateTimeIsAfter(d: DateTime): Boolean = self.date > d.date or (self.date = d.date and self.time > d.date)
+  DateTimeIsInPast(): Boolean = DateIsInPast() or (Today() = self.date and Now() < self.time)
+  DateTimeIsInFuture(): Boolean = DateIsInFuture() or (Today() = self.date and Now() > self.time)
+end
+
+class Okres
+attributes
+  poczatkowa_data_czas: DateTime
+  koncowa_data_czas: DateTime
+
+operations
+  Overlaps(o: Okres): Boolean = not (o.poczatkowa_data_czas.DateTimeIsAfter(self.koncowa_data_czas) or 
+								     self.poczatkowa_data_czas.DateTimeIsAfter(o.koncowa_data_czas))
+end
+
+class Oplata
+end
+
+class Szacowana_Oplata_Za_Wynajem < Oplata
+end
+
+class Oplata_Za_Pozny_Zwrot < Oplata
+end
+
+class Oplata_Za_Wynajem < Oplata
+end
+
+class Przeglad
+end
+
+class Wynajmowany_Samochod
+attributes
+  odczyt_drogomierza: Integer
+  potrzebuje_naprawy: Boolean
+
+-- BR006
+-- Wynajmowany samochód musi być uznany za potrzebujący przeglądu, 
+-- jeżeli odczyt drogomierza wynajmowanego samochodu jest większy niż (przebieg serwisowy wynajmowanego samochodu – 200).
+  potrzebuje_przegladu: Boolean
+	derived: odczyt_drogomierza > (przebieg_serwisowy - 200)
+	
+  poziom_paliwa: Poziom_Paliwa
+  przebieg_serwisowy: Integer
+end
+
+class Model_Samochodu
+end
+
+class Grupa_Samochodow
+end
+
+class Kategoria_Pojazdow
+end
+
+class Prawo_Jazdy
+attributes
+  data_waznosci: Date
+-- BR22
+-- Prawo jazdy musi być uznane za spełniające warunki wynajmu jeżeli data ważności prawa jazdy jest późniejsza, 
+-- niż data zwrotu wynajmu dla wynajmu 
+-- i model samochodu wynajmowanego samochodu dla wynajmu jest zawarty w grupie samochodów, 
+-- która należy do kategorii pojazdów, na którą jest prawo jazdy.
+operations
+  Spelnia_warunki_wynajmu(wynajem: Wynajem): Boolean =
+     self.data_waznosci.DateIsAfter(wynajem.data_czas_zwrotu) and 
+	 wynajem.wynajmowany_samochod->notEmpty and
+	 self.kategorie_pojazdow.grupy_samochodow.modele_samochodow->flatten()->includes(wynajem.wynajmowany_samochod.model_samochodu)
+end
+
+class Kierowca
+attributes
+  kierowca_wykluczony: Boolean
+-- BR27
+  derived: self.negatywne_doswiadczenia->size >= 3
+  wiek: Integer
+end
+
+class Czlonek_Klubu < Kierowca
+end
+
+class Dodatkowy_Kierowca < Kierowca
+end
+
+class Karta_kredytowa
+end
+
+class Negatywne_Doswiadczenie
+attributes
+  data_czas_powiadomienia: DateTime
+end
+
+class Wynajem
+attributes
+  czas_wynajmu: Integer
+  data_czas_rzeczywistego_odbioru: DateTime
+  data_czas_rzeczywistego_zwrotu: DateTime
+  data_czas_zwrotu: DateTime
+  poziom_paliwa: Poziom_Paliwa
+  status: Status
+end
+
+class Wynajem_Miedzynarodowy < Wynajem
+end
+
+class Wynajem_Krajowy < Wynajem
+end
+
+class Wynajem_Za_Punkty < Wynajem
+attributes
+	data_czas_rezerwacji: DateTime
+end
+
+class Wynajem_Gotowkowy < Wynajem
+end
+
+class Wynajem_Ad_Hoc < Wynajem
+end
+
+class Wynajem_Z_Wyprzedzeniem < Wynajem
+attributes
+  nr_umowy: String
+  status_wynajmu_z_wyprzedzeniem: Status_Wynajmu_Z_Wyprzedzeniem
+  zaplanowana_data_czas_odbioru: DateTime
+end
+
+class Rezerwacja 
+attributes
+  data_czas_rezerwacji : DateTime
+end  
+
+class Transfer
+attributes
+  data_czas_dostarczenia_samochodu: DateTime
+end
+
+class Miedzynarodowy_Zwrot < Transfer
+end
+
+class Region
+end
+
+class Oddzial
+end
+
+class Kraj
+end
+  
+
+-- association class
+associationclass Odpowiedzialny_Za between
+    Kierowca [1] role wynajmujacy
+    Wynajem [*] role wynajem
+attributes
+	posiada_kwalifikacje: Boolean
+	derived: wynajmujacy.wiek > 21 and wynajmujacy.prawa_jazdy->exists(p | p.Spelnia_warunki_wynajmu(wynajem))
+
+-- BR007
+-- Kierowca musi by uznany za kierowcę posiadającego kwalifikacje, 
+-- jeżeli wiek kierowcy jest powyżej 21 i kierowca ma prawo jazdy, które spełnia warunki wynajmu.
+
+end
+
+associationclass Zajeta_Oplata between
+    Szacowana_Oplata_Za_Wynajem [*] role szacowane_oplaty_za_wynajem
+    Karta_kredytowa [0..1] role karta_kredytowa
+attributes
+	data_czas_zajecia_oplaty: DateTime
+end
+
+
+-- associations
+association Jest_Na between
+    Prawo_Jazdy [*] role prawa_jazdy
+    Kategoria_Pojazdow[1..*] role kategorie_pojazdow
+end
+
+association Ma_1 between
+	Kierowca [1] role kierowca
+	Prawo_Jazdy [1..*] role prawa_jazdy
+end
+
+composition Nalezy_Do between
+  Kategoria_Pojazdow[1] role kategoria_pojazdow
+  Grupa_Samochodow[*] role grupy_samochodow
+end 	
+
+association Jest_Zawarty between
+	Model_Samochodu[*] role modele_samochodow
+	Grupa_Samochodow[*] role grupy_samochodow
+end
+
+association XXX1 between
+	Wynajem[*] role wynajmy
+	Dodatkowy_Kierowca[0..3] role dodatkowi_kierowcy
+end
+
+association Ma_2 between
+	Wynajem[*] role wynajmy
+	Grupa_Samochodow[1] role zadana_grupa_samochodow
+end
+
+association Jest_Zarezerwowana_Dla between
+	Grupa_Samochodow[0..1] role zarezerowana_grupa_samochodow
+	Wynajem[*] role zarezerwowane_wynajmy
+end
+
+association XXX2 between
+	Model_Samochodu[1] role model_samochodu
+	Wynajmowany_Samochod[*] role wynajmowane_samochody
+end
+
+association Ma_3 between
+	Wynajmowany_Samochod[1] role wynajmowany_samochod
+	Przeglad[0..1] role zaplanowany_przeglad
+end
+
+association XXX3 between
+	Transfer[*] role transfery
+	Wynajmowany_Samochod[1] role transferowany_samochod
+end
+
+association Jest_Wlascicielem_1 between 
+	Region[1] role region
+	Wynajmowany_Samochod[*] role wynajmowane_samochody
+end
+
+association XXX4 between
+	Wynajem_Z_Wyprzedzeniem[*] role wynajmy_z_wyprzedzeniem
+	Wynajmowany_Samochod[0..1] role przypisany_samochod
+end
+	
+association Jest_Zadany_Przez between
+	Model_Samochodu[0..1] role model_samochodu
+	Wynajem_Z_Wyprzedzeniem[*] role wynajmy_z_wyprzedzeniem
+end
+
+association XXX5 between
+	Wynajmowany_Samochod[*] role wynajmowane_samochody
+	Kraj[1] role kraj_rejestracji
+end
+
+association XXX6 between
+	Transfer[*] role transfery
+	Oddzial[1] role oddzial_dostarczenia
+end
+
+association Jest_W between
+	Oddzial[*] role oddzialy
+	Kraj[1] role kraj
+end
+
+composition Zawiera between
+	Region[1] role region
+	Oddzial[*] role oddzialy
+end
+
+association Przechowywany_W between
+	Wynajmowany_Samochod[*] role wynajmowane_samochody
+	Oddzial[1] role oddzial
+end
+
+association Ma_4 between
+	Wynajem[*] role wynajmy_zwrot
+	Oddzial[1] role oddzial_zwrotu
+end	
+
+association Ma_5 between
+	Wynajem[*] role wynajmy_odbior
+	Oddzial[1] role oddzial_odbioru
+end
+
+association Ustanawia between
+	Rezerwacja[1] role rezerwacja
+	Wynajem_Z_Wyprzedzeniem[1] role wynajem_z_wyprzedzeniem
+end
+
+composition C1 between
+	Wynajem[1] role wynajem
+	Szacowana_Oplata_Za_Wynajem[0..1] role szacowana_oplata_za_wynajem
+end
+
+composition C2 between
+	Wynajem[1] role wynajem
+	Oplata_Za_Wynajem[0..1] role oplata_za_wynajem
+end
+
+composition Doliczana_Do between
+	Wynajem[1] role wynajem
+	Oplata_Za_Pozny_Zwrot[0..1] role oplata_za_pozny_zwrot
+end
+
+association Wystepuje_W_Ramach between
+	Wynajem[1] role wynajem
+	Negatywne_Doswiadczenie[*] role negatywne_doswiadczenia
+end
+
+association Ma_6 between
+	Kierowca[1] role kierowca
+	Negatywne_Doswiadczenie[*] role negatywne_doswiadczenia
+end
+
+association Jest_Wlascicielem_2 between
+	Kierowca[1] role kierowca
+	Karta_kredytowa[1..*] role karty_kredytowe
+end
+
+association Ma_Okres_Wynajmu between
+	Wynajem[*] role wynajmy_w_okresie
+	Okres[0..1] role okres_wynajmu
+end
+
+association	Ma_Okres_Karencji between
+	Wynajem[*] role wynajmy_w_karencji
+	Okres[0..1] role okres_karencji
+end  
+
+association XXX7 between
+	Wynajem[*] role wynajmy
+	Wynajmowany_Samochod[0..1] role wynajmowany_samochod
+end
+
+
+-- constraints
+constraints
+
+  	
+-- BR001
+-- Wynajem musi mieć dokładnie jeden okres wynajmu
+context Wynajem inv BR001:
+	self.okres_wynajmu->size = 1
+
+-- BR002
+-- Wynajem musi mieć dokładnie jedną żądaną grupę samochodów
+context Wynajem inv BR002:
+	self.zadana_grupa_samochodow->size = 1
+ 
+-- BR003
+-- Wynajem musi mieć dokładnie jeden oddzial zwrotu
+context Wynajem inv BR003:
+	self.oddzial_zwrotu->size = 1
+	
+-- BR004
+-- Zaplanowana data/czas odbioru dla wynajmu z wyprzedzeniem musi być po dacie/czasie rezerwacji dla rezerwacji, 
+-- która ustanawia wynajem z wyprzedzeniem.
+context Wynajem_Z_Wyprzedzeniem inv BR004:
+	self.zaplanowana_data_czas_odbioru.DateTimeIsAfter(self.rezerwacja.data_czas_rezerwacji)
+
+-- BR005
+-- Wynajem może mieć status otwarty tylko jeżeli szacowana opłata za wynajem została tymczasowo zajęta na karcie kredytowej 
+-- wynajmującego odpowiedzialnego za wynajem.
+-- To przykładowe, niejedyne rozwiązanie
+context Wynajem inv BR005:
+	self.status = Status::otwarty implies
+	(self.szacowana_oplata_za_wynajem->notEmpty and  
+	 self.szacowana_oplata_za_wynajem.karta_kredytowa->notEmpty and 
+	 self.wynajmujacy.karty_kredytowe->includes(self.szacowana_oplata_za_wynajem.karta_kredytowa)) 
+
+-- BR006
+-- Wynajmowany samochód musi być uznany za potrzebujący przeglądu, 
+-- jeżeli odczyt drogomierza wynajmowanego samochodu jest większy niż (przebieg serwisowy wynajmowanego samochodu – 200).
+-- context Wynajmowany_Samochod::potrzebuje_przegladu:Boolean 
+-- derive: odczyt_drogomierza > (przebieg_serwisowy - 200)
+
+-- BR008
+-- Status wynajmu musi byc uznany za otwarty, jeżeli data/czas rzeczywistego odbioru wynajmu jest w przeszłości 
+-- i okres karencji wynajmu ma końcową datę/czas, który jest w przyszłości.
+context Wynajem inv BR008:
+	if  self.data_czas_rzeczywistego_odbioru.DateTimeIsInPast() and
+		self.okres_karencji->notEmpty and
+		self.okres_karencji.koncowa_data_czas.DateTimeIsInFuture() then
+			self.status = Status::otwarty
+	else
+		true
+	endif		
+	
+-- BR009
+-- Status wynajmu musi byc uznany za opóźniony, jeżeli data/czas rzeczywistego odbioru wynajmu jest w przeszłości 
+-- i okres karencji wynajmu ma końcową datę/czas, który (jest w przeszłości i nie jest więcej niż 24 godziny w przeszłości).
+
+context Wynajem inv BR009:
+	if  self.data_czas_rzeczywistego_odbioru.DateTimeIsInPast() and
+		self.okres_karencji->notEmpty and
+		self.okres_karencji.koncowa_data_czas.DateTimeIsInPast() and
+		-- 24 godz
+		self.okres_karencji.koncowa_data_czas.HowFarFromToday() <= 1 and  
+		self.okres_karencji.koncowa_data_czas.HowFarFromNow().mod(60) <= 24		
+		then
+			self.status = Status::opozniony
+	else
+		true
+	endif		
+
+-- BR010
+-- Wynajem może być otwarty tylko jeżeli każdy kierowca wynajmu nie jest kierowcą wykluczonym.
+context Wynajem inv BR010:
+	self.status = Status::otwarty implies
+		not self.wynajmujacy.kierowca_wykluczony and self.dodatkowi_kierowcy->forAll(k | not k.kierowca_wykluczony)
+		
+-- BR11
+-- Ale da się zrobić jej prostszą wersję
+-- Region oddziału zwrotu wynajmu krajowego lub wynajmu międzynarodowego musi być właścicielem 
+-- wynajmowanego samochodu w ramach wynajmu 
+context Wynajem inv BR011:
+   self.oddzial_zwrotu.region = self.wynajmowany_samochod.region
+
+
+-- BR12
+-- Kraj oddziału zwrotu wynajmu każdego wynajmu międzynarodowego musi być 
+-- krajem rejestracji wynajmowanego samochodu w ramach wynajmu.
+context Wynajem_Miedzynarodowy inv BR12:
+	self.oddzial_zwrotu.kraj = self.wynajmowany_samochod.kraj_rejestracji
+
+-- BR13
+-- Do wynajmu musi być doliczona opłata za późny zwrot 
+-- jeżeli  data/czas  rzeczywistego zwrotu wynajmu jest po końcowej dacie/czasie okresu karencji wynajmu.
+context Wynajem inv BR13:
+  self.okres_karencji->notEmpty and self.data_czas_rzeczywistego_zwrotu.DateTimeIsAfter(self.okres_karencji.koncowa_data_czas) implies
+	self.oplata_za_pozny_zwrot->notEmpty
+
+-- BR14
+-- Wynajmowany samochód przypisany do wynajmu z wyprzedzeniem musi być przechowywany w oddziale odbioru wynajmu, 
+-- jeżeli status wynajmu z wyprzedzeniem jest przypisany.
+context Wynajmowany_Samochod inv BR14:
+  self.wynajmy_z_wyprzedzeniem->forAll(w | w.oddzial_odbioru = self.oddzial)
+  
+-- BR15
+-- Poziom paliwa wynajmowanego samochodu w ramach wynajmu musi być „pełny” w dniu/czasie rzeczywistego odbioru wynajmu
+context Wynajem inv BR15:
+  self.data_czas_rzeczywistego_odbioru.IsNow() implies self.wynajmowany_samochod.poziom_paliwa = Poziom_Paliwa::pelny
+  
+-- BR16
+-- Data/czas rezerwacji wynajmu za punkty musi być co najmniej 5 dni przed początkową datą/czasem okresu wynajmu.
+context Wynajem_Za_Punkty inv BR16:
+  self.okres_wynajmu.poczatkowa_data_czas.DateIsAfter(self.data_czas_rezerwacji) and
+  self.okres_wynajmu.poczatkowa_data_czas.HowFarFromDate(self.data_czas_rezerwacji) >= 5
+  
+-- BR17
+-- Wynajmujący przy wynajmie za punkty musi być członkiem klubu.
+context Wynajem_Za_Punkty inv BR17:
+  wynajmujacy.oclIsTypeOf(Czlonek_Klubu)
+  
+-- BR18
+-- Wynajmowany samochód, który potrzebuje przeglądu, musi mieć zaplanowany przegląd.
+context Wynajmowany_Samochod inv BR18:
+  self.potrzebuje_przegladu implies self.zaplanowany_przeglad->notEmpty
+
+-- BR19
+-- Przebieg serwisowy wynajmowanego samochodu musi mieć najwyżej 5500 mil
+context Wynajmowany_Samochod inv BR19:
+  self.przebieg_serwisowy <= 5500
+
+-- BR20
+-- Data/czas powiadomienia o negatywnym doświadczeniu musi byc
+-- po dacie/czasie rzeczywistego odbioru wynajmu dla wynajmu, w ramach którego wystąpiło negatywne doświadczenie.
+context Wynajem inv BR20:
+  self.negatywne_doswiadczenia->forAll(d | d.data_czas_powiadomienia.DateIsAfter(self.data_czas_rzeczywistego_odbioru))
+
+-- BR21
+-- Samochód transferowany w ramach transferu samochodu w dacie/czasie dostarczenia samochodu 
+-- w ramach transferu musi być własnością regionu, który zawiera oddział dostarczenia transferu.
+-- Da się prostszą wersję
+-- Samochód transferowany w ramach transferu musi być własnością regionu, który zawiera oddział dostarczenia transferu
+context Transfer inv BR21:
+  self.transferowany_samochod.region = self.oddzial_dostarczenia.region
+
+-- BR22 - już zrobione (operacja w samochodzie)
+
+-- BR23
+-- Początkowa data/czas  okresu wynajmu zarezerwowanego wynajmu musi być w przyszłości.
+context Wynajem_Z_Wyprzedzeniem inv BR23:
+	self.okres_wynajmu.poczatkowa_data_czas.DateTimeIsInFuture()
+
+-- BR24
+-- Okres wynajmu każdego wynajmu musi być nie dłuższy niż 90 dni
+context Wynajem inv BR24:
+	self.okres_wynajmu.koncowa_data_czas.HowFarFromDate(self.okres_wynajmu.poczatkowa_data_czas) <= 90
+
+-- BR25
+-- Okres wynajmu1 nie może nachodzić na okres wynajmu2, jeżeli poniższe warunki są prawdziwe:
+-- wynajem1 nie jest wynajmem2
+-- wynajmujący wynajmu1 jest wynajmującym wynajmu2
+context Wynajem inv BR25:
+	Wynajem.allInstances()->forAll(w1, w2 |w1 <> w2 and w1.wynajmujacy = w2.wynajmujacy implies not w1.okres_wynajmu.Overlaps(w2.okres_wynajmu))
+	
+-- BR26
+-- Kraj oddziału dostarczenia transferu w ramach międzynarodowego zwrotu musi być 
+-- krajem rejestracji transferowanego samochodu dla międzynarodowego zwrotu.
+context Miedzynarodowy_Zwrot inv BR26:
+	self.oddzial_dostarczenia.kraj = transferowany_samochod.kraj_rejestracji
+	
+
+-- BR28
+-- Wynajmujący, który jest odpowiedzialny za wynajem, musi byc
+-- właścicielem karty kredytowej, na której została tymczasowo zajęta szacowana opłata za wynajem w dniu/czasie rzeczywistego odbioru wynajmu.
+
+context Wynajem inv BR28:
+	self.szacowana_oplata_za_wynajem->notEmpty implies
+		self.szacowana_oplata_za_wynajem.zajeta_Oplata.data_czas_zajecia_oplaty = self.data_czas_rzeczywistego_odbioru and
+		wynajmujacy.karty_kredytowe->includes(self.szacowana_oplata_za_wynajem.karta_kredytowa)
+			
+	
+-- BR29
+-- Odczyt drogomierza wynajmowanego samochodu nie może być większy niż (przebieg serwisowy wynajmowanego samochodu + 500 mil).
+context Wynajmowany_Samochod inv BR59:
+  odczyt_drogomierza <= przebieg_serwisowy + 500
+
+-- BR30
+-- Model samochodu, który jest żądany przy wynajmie z wyprzedzeniem, 
+-- musi być zawarty w grupie samochodów, która jest zarezerwowana dla wynajmu.
+context Wynajem_Z_Wyprzedzeniem inv BR30:
+  self.zadana_grupa_samochodow.modele_samochodow->includes(self.model_samochodu)
